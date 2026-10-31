@@ -405,6 +405,9 @@ button.cover:active { transform: scale(.95); }
 .row.is-editing .row-actions { display: none; }
 .entry-edit .play-time { flex-wrap: wrap; margin-top: 10px; }
 .entry-edit .play-label { flex-basis: 100%; white-space: nowrap; }
+.plat-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.plat-chip { padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; color: var(--muted); font: inherit; font-size: 13px; }
+.plat-chip.is-on { background: var(--brass); color: var(--ink); border-color: var(--brass); font-weight: 600; }
 .rate-num { margin-left: 8px; font-size: 13px; font-weight: 700; color: var(--brass); font-variant-numeric: tabular-nums; }
 .tab-gap { flex: none; width: 10px; }
 
@@ -634,7 +637,7 @@ button.cover:active { transform: scale(.95); }
 
   // ---------------------------------------------------------------- state
   var S = { selected: [], saved: new Set(), played: new Set(), hidden: new Set(),
-    recent: [], tab: "search", query: "", challenge: null, log: [], trash: [], chOn: false };
+    recent: [], tab: "search", query: "", challenge: null, log: [], trash: [], chOn: false, chp: [] };
   var picked = null, wheelSpins = 0;
 
   function keyOf(i) { var g = games[i]; return g.platform + "|" + g.title; }
@@ -642,7 +645,7 @@ button.cover:active { transform: scale(.95); }
   function persistCore() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
-        selected: S.selected, tab: S.tab, chOn: S.chOn,
+        selected: S.selected, tab: S.tab, chOn: S.chOn, chp: S.chp,
         saved: Array.from(S.saved).map(keyOf), played: Array.from(S.played).map(keyOf),
         hidden: Array.from(S.hidden).map(keyOf), recent: S.recent.map(keyOf),
         challenge: challengeOut(S.challenge), log: S.log.map(challengeOut).filter(Boolean), trash: S.trash.map(trashOut).filter(Boolean)
@@ -659,6 +662,7 @@ button.cover:active { transform: scale(.95); }
     if (c.p) o.p = c.p;
     return o;
   }
+  function chpIn(a) { var out = []; (Array.isArray(a) ? a : []).forEach(function (p) { if (NAMES[p] && out.indexOf(p) < 0) out.push(p); }); return out.length === PLATFORMS.length ? [] : out; }
   var TRASH_MS = 30 * 864e5;
   function trashOut(c) { var o = challengeOut(c); if (o) o.d = c.d || Date.now(); return o; }
   function trashLoad(arr) {
@@ -688,6 +692,7 @@ button.cover:active { transform: scale(.95); }
         return (arr || []).map(function (k) { return byKey[k]; }).filter(Boolean).map(function (g) { return g.i; });
       };
       S.selected = (d.selected || []).filter(function (p) { return NAMES[p]; });
+      S.chp = chpIn(d.chp);
       S.chOn = d.chOn === true;
       S.tab = ["search", "saved", "played", "hidden", "recent"].indexOf(d.tab) > -1 ? d.tab : "search";
       S.saved = new Set(toIdx(d.saved)); S.played = new Set(toIdx(d.played)); S.hidden = new Set(toIdx(d.hidden));
@@ -1321,7 +1326,18 @@ button.cover:active { transform: scale(.95); }
     return Math.floor(h / 24) + "d" + (h % 24 ? " " + (h % 24) + "h" : "");
   }
   function fmtWhen(t) { try { return new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }); } catch (e) { return ""; } }
-  var logEdit = null, chOpenTrash = false;
+  var logEdit = null, chOpenTrash = false, chOpenPlat = false;
+  function chPlatOk(p) { return !S.chp.length || S.chp.indexOf(p) > -1; }
+  function chPlatHTML() {
+    var n = S.chp.length ? S.chp.length : PLATFORMS.length, pool = 0, done = doneSet();
+    games.forEach(function (g) { if (chPlatOk(g.platform) && !S.hidden.has(g.i) && !done.has(g.i)) pool++; });
+    return '<details class="backup ch-details ch-plat-details"' + (chOpenPlat ? " open" : "") + "><summary>Consoles (" + (S.chp.length ? n + " of " + PLATFORMS.length : "all") + ")</summary>" +
+      '<p class="list-note">Challenge rolls only come from the consoles you pick. ' + pool.toLocaleString() + (pool === 1 ? " game" : " games") + " in the pool.</p>" +
+      '<div class="plat-chips">' + PLATFORMS.map(function (p) {
+        var on = chPlatOk(p[0]);
+        return '<button type="button" class="plat-chip' + (on ? " is-on" : "") + '" data-act="chp-toggle" data-p="' + esc(p[0]) + '" aria-pressed="' + on + '">' + esc(p[1]) + "</button>";
+      }).join("") + '</div><div class="backup-actions"><button type="button" class="btn-soft" data-act="chp-all">Select all</button></div></details>';
+  }
   function entryHTML(c, n) {
     if (logEdit && logEdit.n === n) {
       return '<div class="entry-edit">' + starsHTML({ r: logEdit.v }, n) +
@@ -1360,10 +1376,10 @@ button.cover:active { transform: scale(.95); }
   function sheetCSV() {
     var q = function (v) { v = String(v == null ? "" : v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
     var iso = function (t) { try { return new Date(t).toISOString(); } catch (e) { return ""; } };
-    var lines = [["Game", "Console", "Result", "Attempt", "First started", "Started", "Finished", "Hours", "In-game hours", "Rating (out of 10)", "Note"].join(",")];
+    var lines = [["Game", "Console", "Result", "Attempt", "Started", "Finished", "Hours", "In-game hours", "Rating (out of 10)", "Note"].join(",")];
     sheetRows().forEach(function (r) {
       var c = r.c, g = games[c.i];
-      lines.push([g.title, NAMES[g.platform], r.prog ? "In progress" : c.s === "done" ? "100%" : "Gave up", r.att, iso(r.first), iso(c.a),
+      lines.push([g.title, NAMES[g.platform], r.prog ? "In progress" : c.s === "done" ? "100%" : "Gave up", r.att, iso(c.a),
         r.prog ? "" : iso(c.b), r.prog ? "" : (Math.max(0, c.b - c.a) / 3600000).toFixed(1), c.p ? (c.p / 60).toFixed(1) : "", c.r || "", c.n || ""].map(q).join(","));
     });
     return lines.join("\r\n");
@@ -1433,10 +1449,10 @@ button.cover:active { transform: scale(.95); }
       : '<p class="list-note">Finished and abandoned challenges will show up here.</p>';
     var rows = sheetRows(), fdt = function (t) { return esc(fmtWhen(t)); };
     var sheet = rows.length ? '<div class="backup-actions"><button type="button" class="btn-soft" data-act="sheet-copy">Copy as spreadsheet</button><button type="button" class="btn-soft" data-act="sheet-save">Save .csv file</button></div>' +
-      '<div class="sheet-wrap" tabindex="0" role="region" aria-label="Game sheet"><table class="sheet"><thead><tr><th>Game</th><th>Console</th><th>Result</th><th>First started</th><th>Started</th><th>Finished</th><th>Time</th><th>In-game time</th><th>Rating</th><th>Note</th></tr></thead><tbody>' +
+      '<div class="sheet-wrap" tabindex="0" role="region" aria-label="Game sheet"><table class="sheet"><thead><tr><th>Game</th><th>Console</th><th>Result</th><th>Started</th><th>Finished</th><th>Time</th><th>In-game time</th><th>Rating</th><th>Note</th></tr></thead><tbody>' +
       rows.map(function (r) {
         var c = r.c, g = games[c.i], res = r.prog ? "In progress" : c.s === "done" ? "100%" : "Gave up";
-        return "<tr><td>" + esc(g.title) + "</td><td>" + esc(NAMES[g.platform]) + "</td><td>" + res + (r.att > 1 ? " · try " + r.att : "") + "</td><td>" + fdt(r.first) + "</td><td>" + fdt(c.a) +
+        return "<tr><td>" + esc(g.title) + "</td><td>" + esc(NAMES[g.platform]) + "</td><td>" + res + (r.att > 1 ? " · try " + r.att : "") + "</td><td>" + fdt(c.a) + (r.att > 1 ? '<br><span class="muted">First tried ' + fdt(r.first) + "</span>" : "") +
           "</td><td>" + (r.prog ? dash : fdt(c.b)) + "</td><td>" + esc(fmtDur(Math.max(0, (r.prog ? Date.now() : c.b) - c.a))) + "</td><td>" + (c.p ? esc(fmtPlay(c.p)) : dash) + "</td><td>" + (c.r ? c.r + "/10" : dash) + '</td><td class="sheet-note">' + esc(c.n || "") + "</td></tr>";
       }).join("") + "</tbody></table></div>"
       : '<p class="list-note">Every game you start shows up here with when you first started it and when you finished.</p>';
@@ -1458,7 +1474,7 @@ button.cover:active { transform: scale(.95); }
           : '<div class="ch-actions"><button type="button" class="btn-gold" data-act="ch-done">I got 100%</button>' +
             '<button type="button" class="btn-soft" data-act="ch-quit">I gave up</button></div></div>');
     } else {
-      prog = '<p class="ch-lead">' + (S.chOn ? "No challenge in progress. Roll the wheel to get a completely random game from every console. Your goal is to 100% it." : "No challenge in progress. Turn on Challenge mode on the wheel to start one.") + "</p>";
+      prog = '<p class="ch-lead">' + (S.chOn ? "No challenge in progress. Roll the wheel to get a completely random game from " + (S.chp.length ? "your chosen consoles" : "every console") + ". Your goal is to 100% it." : "No challenge in progress. Turn on Challenge mode on the wheel to start one.") + "</p>";
     }
     var inc = "";
     if (incoming && games[incoming]) {
@@ -1476,7 +1492,7 @@ button.cover:active { transform: scale(.95); }
           (c.s === "done" ? "100%" : "Gave up") + " · deleted " + esc(fmtDay(c.d)) + '</span></div><div class="row-actions"><button type="button" class="btn-soft btn-sm" data-act="trash-restore" data-n="' + n + '">Restore</button>' +
           '<button type="button" class="icon-btn danger" data-act="trash-forget" data-n="' + n + '" aria-label="Delete ' + esc(g.title) + ' forever" title="Delete forever">' + ICON.trash + "</button></div></li>";
       }).join("") + "</ul></details>" : "";
-    el.innerHTML = inc + prog + stats +
+    el.innerHTML = inc + prog + stats + chPlatHTML() +
       '<details class="backup ch-details ch-log-details"' + (openLog ? " open" : "") + '><summary>Log' + (S.log.length ? " (" + S.log.length + ")" : "") + "</summary>" + log + "</details>" +
       trashH +
       '<details class="backup ch-details ch-sheet-details"' + (openSheet ? " open" : "") + "><summary>Game sheet" + (rows.length ? " (" + rows.length + ")" : "") + "</summary>" + sheet + "</details>" +
@@ -1489,7 +1505,7 @@ button.cover:active { transform: scale(.95); }
   }
   function rollChallenge() {
     if (!S.chOn || S.challenge || rolling) return;
-    var done = doneSet(), list = games.filter(function (g) { return !S.hidden.has(g.i) && !done.has(g.i); });
+    var done = doneSet(), list = games.filter(function (g) { return !S.hidden.has(g.i) && !done.has(g.i) && chPlatOk(g.platform); });
     if (!list.length) { toast("No games left to roll"); return; }
     var final = list[Math.floor(Math.random() * list.length)];
     var finish = function () {
@@ -1565,7 +1581,7 @@ button.cover:active { transform: scale(.95); }
     log.sort(function (p, q) { return (q.b || 0) - (p.b || 0); });
     return { app: "game-roullete", version: 1, selected: (a.selected && a.selected.length ? a.selected : b.selected) || [],
       saved: uni(a.saved, b.saved), played: uni(a.played, b.played), hidden: uni(a.hidden, b.hidden), recent: uni(a.recent, b.recent).slice(0, 30),
-      challenge: a.challenge || b.challenge || null, log: log.slice(0, 300), trash: trash.slice(0, 100) };
+      chp: (a.chp && a.chp.length) ? a.chp : (b.chp || []), challenge: a.challenge || b.challenge || null, log: log.slice(0, 300), trash: trash.slice(0, 100) };
   }
   function syApply(d) {
     var toIdx = function (arr) { var out = []; (Array.isArray(arr) ? arr : []).forEach(function (k) { var g = typeof k === "string" ? byKey[k] : null; if (g && out.indexOf(g.i) < 0) out.push(g.i); }); return out; };
@@ -1577,6 +1593,7 @@ button.cover:active { transform: scale(.95); }
       S.trash = trashLoad(d.trash);
       S.saved = new Set(toIdx(d.saved)); S.played = new Set(toIdx(d.played)); S.hidden = new Set(toIdx(d.hidden)); S.recent = toIdx(d.recent);
       S.selected = (Array.isArray(d.selected) ? d.selected : []).filter(function (p) { return NAMES[p]; });
+      S.chp = chpIn(d.chp);
       picked = null;
       renderCard(); refresh(); renderLists(); renderChallenge(); renderChallengeSwitch(); persistCore();
     } finally { syApplying = false; }
@@ -1635,7 +1652,7 @@ button.cover:active { transform: scale(.95); }
   function backupObject() {
     return {
       app: "game-roullete", version: 1, exported: new Date().toISOString(),
-      selected: S.selected,
+      selected: S.selected, chp: S.chp,
       saved: Array.from(S.saved).map(keyOf), played: Array.from(S.played).map(keyOf),
       hidden: Array.from(S.hidden).map(keyOf), recent: S.recent.map(keyOf),
       challenge: challengeOut(S.challenge), log: S.log.map(challengeOut).filter(Boolean), trash: S.trash.map(trashOut).filter(Boolean)
@@ -1693,6 +1710,7 @@ button.cover:active { transform: scale(.95); }
     }
     S.saved = new Set(next.saved); S.played = new Set(next.played); S.hidden = new Set(next.hidden); S.recent = next.recent;
     S.selected = (Array.isArray(d.selected) ? d.selected : []).filter(function (p) { return NAMES[p]; });
+    S.chp = chpIn(d.chp);
     picked = null; $("backup-text").value = "";
     renderCard(); refresh(); renderLists(); renderChallenge(); renderChallengeSwitch(); persist();
     toast("Restored " + total + (total === 1 ? " game" : " games") + (skipped ? " (" + skipped + " not found)" : ""));
@@ -1811,6 +1829,12 @@ button.cover:active { transform: scale(.95); }
     if (act === "dev-pick") { devPick = Number(el.getAttribute("data-i")); var dg = games[devPick]; $("dev-picked").textContent = "Selected: " + dg.title + " (" + NAMES[dg.platform] + ")"; $("dev-results").innerHTML = ""; return; }
     if (act === "dev-add") { devAdd(); return; }
     if (act === "dev-lock") { try { localStorage.removeItem(DEV_KEY); } catch (e) {} devShow(); toast("Developer area hidden"); return; }
+    if (act === "chp-toggle") {
+      var cp = el.getAttribute("data-p"), cur = S.chp.length ? S.chp.slice() : PLATFORMS.map(function (p) { return p[0]; });
+      if (cur.indexOf(cp) > -1) { if (cur.length === 1) { toast("Keep at least one console on"); return; } cur.splice(cur.indexOf(cp), 1); } else cur.push(cp);
+      S.chp = cur.length === PLATFORMS.length ? [] : cur; chOpenPlat = true; renderChallenge(); persist(); return;
+    }
+    if (act === "chp-all") { S.chp = []; chOpenPlat = true; renderChallenge(); persist(); return; }
     if (act === "trash-restore") {
       var tn = Number(el.getAttribute("data-n")), te = S.trash[tn];
       if (te) { S.trash.splice(tn, 1); delete te.d; S.log.push(te); S.log.sort(function (p, q) { return (q.b || 0) - (p.b || 0); }); chOpenTrash = true; renderChallenge(); renderSummary(); persist(); toast("Restored to your log"); }
